@@ -7,6 +7,7 @@ import '../models/pack.dart';
 import '../services/audio_service.dart';
 import '../state/game_state.dart';
 import '../widgets/card_face.dart';
+import '../widgets/pack_pouch.dart';
 import 'collection_screen.dart';
 
 const double _cardWidth = 200;
@@ -178,7 +179,7 @@ class _DeckBack extends StatelessWidget {
   }
 }
 
-/// パックが震えて弾ける開封アニメーション。
+/// パックが震えて弾ける開封アニメーション。弾ける瞬間に光の爆発を添える。
 class _OpeningPack extends StatelessWidget {
   const _OpeningPack({required this.controller, required this.pack});
 
@@ -187,53 +188,54 @@ class _OpeningPack extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (context, child) {
-        final t = controller.value;
-        final shake = sin(t * pi * 10) * 8 * (1 - t);
-        final scale = 1.0 + t * 0.4;
-        final opacity = t < 0.75 ? 1.0 : (1 - (t - 0.75) / 0.25);
-        return Opacity(
-          opacity: opacity.clamp(0.0, 1.0),
-          child: Transform.translate(
-            offset: Offset(shake, 0),
-            child: Transform.scale(scale: scale, child: child),
-          ),
-        );
-      },
-      child: _PackVisual(pack: pack, width: 160),
-    );
-  }
-}
-
-/// パックの見た目。
-class _PackVisual extends StatelessWidget {
-  const _PackVisual({required this.pack, required this.width});
-
-  final Pack pack;
-  final double width;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: width,
-      height: width * 1.4,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [pack.color, Color.lerp(pack.color, Colors.white, 0.4)!],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
+    return Stack(
+      alignment: Alignment.center,
+      clipBehavior: Clip.none,
+      children: [
+        AnimatedBuilder(
+          animation: controller,
+          builder: (context, child) {
+            final t = controller.value;
+            // 光の爆発フラッシュ: 弾ける後半でぱっと広がって消える
+            final burstT = ((t - 0.7) / 0.3).clamp(0.0, 1.0);
+            return IgnorePointer(
+              child: Opacity(
+                opacity: burstT == 0 ? 0 : (1 - burstT),
+                child: Container(
+                  width: 60 + burstT * 260,
+                  height: 60 + burstT * 260,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        Colors.white.withValues(alpha: 0.9),
+                        Colors.white.withValues(alpha: 0),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
         ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white, width: 4),
-        boxShadow: const [
-          BoxShadow(color: Colors.black26, blurRadius: 12, offset: Offset(0, 6)),
-        ],
-      ),
-      child: Center(
-        child: Text(pack.emoji, style: TextStyle(fontSize: width * 0.45)),
-      ),
+        AnimatedBuilder(
+          animation: controller,
+          builder: (context, child) {
+            final t = controller.value;
+            final shake = sin(t * pi * 10) * 8 * (1 - t);
+            final scale = 1.0 + t * 0.4;
+            final opacity = t < 0.75 ? 1.0 : (1 - (t - 0.75) / 0.25);
+            return Opacity(
+              opacity: opacity.clamp(0.0, 1.0),
+              child: Transform.translate(
+                offset: Offset(shake, 0),
+                child: Transform.scale(scale: scale, child: child),
+              ),
+            );
+          },
+          child: PackPouch(pack: pack, enabled: true, width: 160),
+        ),
+      ],
     );
   }
 }

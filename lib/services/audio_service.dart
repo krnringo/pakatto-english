@@ -17,14 +17,17 @@ class TtsAudioService implements AudioService {
 
   Future<void> _init() async {
     await _tts.setLanguage('en-US');
-    await _tts.setSpeechRate(0.4); // 幼児向けにゆっくり
-    await _tts.setPitch(1.1);
+    // 子ども向けにテンション高く聞こえるよう、標準よりやや速く・高めに設定。
+    // 本格的な元気な声(実収録のキッズ向けVA)はタスク8のAI音声差し替えで対応する。
+    await _tts.setSpeechRate(0.48);
+    await _tts.setPitch(1.35);
   }
 
   @override
   Future<void> speak(WordCard card) async {
     await _tts.stop();
-    await _tts.speak(card.word);
+    // 単語自体は変えず、末尾の「!」でTTSの抑揚を弾ませる。
+    await _tts.speak('${card.word}!');
   }
 }
 

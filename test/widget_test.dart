@@ -5,6 +5,7 @@ import 'package:pakatto_english/data/master_data.dart';
 import 'package:pakatto_english/models/word_card.dart';
 import 'package:pakatto_english/screens/collection_screen.dart';
 import 'package:pakatto_english/screens/home_screen.dart';
+import 'package:pakatto_english/screens/pack_bag_screen.dart';
 import 'package:pakatto_english/screens/pack_opening_screen.dart';
 import 'package:pakatto_english/screens/parent_screen.dart';
 import 'package:pakatto_english/services/audio_service.dart';
@@ -57,25 +58,23 @@ void main() {
       expect(find.text(animalsPack.emoji), findsNothing);
     });
 
-    testWidgets('中央パックのタップで開封画面に遷移し重なった裏カードが出る',
-        (tester) async {
+    testWidgets('中央パック種のタップでパック袋選択画面に遷移する', (tester) async {
       final state = await freshState();
       final audio = RecordingAudioService();
       await tester.pumpWidget(wrap(const HomeScreen(), state, audio));
       await tester.pump();
 
-      await tester.tap(find.text(colorsPack.emoji)); // 中央パックをタップで開封
-      await tester.pump(); // openPack完了待ち
-      await tester.pump(const Duration(milliseconds: 100)); // 画面遷移
-      await tester.pump(const Duration(seconds: 1)); // 開封アニメーション
+      await tester.tap(find.byKey(const ValueKey('line-center')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300)); // 画面遷移
 
-      expect(state.currentStamina, 1, reason: 'スタミナが1消費される');
-      expect(find.text('⭐'), findsWidgets, reason: '重なった裏向きカードが出る');
-      expect(find.byKey(const ValueKey('top-card')), findsOneWidget,
-          reason: 'いちばん上のカードが1枚');
+      expect(state.currentStamina, 2, reason: '袋選択画面に移っただけではスタミナは消費されない');
+      expect(find.byType(PackBagScreen), findsOneWidget);
+      expect(find.text('${colorsPack.emoji} ${colorsPack.nameJa}'),
+          findsOneWidget);
     });
 
-    testWidgets('スタミナ0ではタップで開封されず、回復残り時間シートが出る',
+    testWidgets('スタミナ0では袋選択画面に進まず、回復残り時間シートが出る',
         (tester) async {
       var now = DateTime(2026, 7, 10, 9, 0);
       final state = await freshState(clock: () => now);
@@ -88,8 +87,47 @@ void main() {
       await tester.pump();
       expect(find.text('💤'), findsOneWidget, reason: 'グレーアウト状態の表示');
 
+      await tester.tap(find.byKey(const ValueKey('line-center')));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byType(PackBagScreen), findsNothing, reason: '袋選択画面に進まない');
+      expect(find.text('⏳'), findsOneWidget, reason: '回復までの残り時間表示');
+    });
+  });
+
+  group('パック袋選択画面', () {
+    testWidgets('中央の袋のタップで開封画面に遷移し重なった裏カードが出る',
+        (tester) async {
+      final state = await freshState();
+      final audio = RecordingAudioService();
+      await tester.pumpWidget(
+          wrap(PackBagScreen(pack: colorsPack), state, audio));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('bag-center')));
+      await tester.pump(); // openPack完了待ち
+      await tester.pump(const Duration(milliseconds: 100)); // 画面遷移
+      await tester.pump(const Duration(seconds: 1)); // 開封アニメーション
+
+      expect(state.currentStamina, 1, reason: 'スタミナが1消費される');
+      expect(find.text('⭐'), findsWidgets, reason: '重なった裏向きカードが出る');
+      expect(find.byKey(const ValueKey('top-card')), findsOneWidget,
+          reason: 'いちばん上のカードが1枚');
+    });
+
+    testWidgets('スタミナ0では開封されず、回復残り時間シートが出る', (tester) async {
+      var now = DateTime(2026, 7, 10, 9, 0);
+      final state = await freshState(clock: () => now);
+      await state.openPack(colorsPack);
+      await state.openPack(colorsPack);
+      expect(state.currentStamina, 0);
+
+      await tester.pumpWidget(
+          wrap(PackBagScreen(pack: colorsPack), state, RecordingAudioService()));
+      await tester.pump();
+
       final openCountBefore = state.totalOpenCount;
-      await tester.tap(find.text(colorsPack.emoji));
+      await tester.tap(find.byKey(const ValueKey('bag-center')));
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(state.totalOpenCount, openCountBefore, reason: '開封されない');
