@@ -9,8 +9,12 @@ import '../state/game_state.dart';
 import '../widgets/card_face.dart';
 import 'collection_screen.dart';
 
-/// パック開封演出: 開封アニメーション → 3枚を1枚ずつタップでめくる →
-/// めくるたび音声再生+新規/復習バッジ → 全部めくったら結果(+コンプリート演出)。
+const double _cardWidth = 200;
+const double _cardHeight = 286;
+
+/// パック開封演出: 開封アニメーション → 3枚が重なって出る → 上の1枚をタップで
+/// めくる(音声再生+新規/復習バッジ)→ もう一度タップでどかして次の1枚 →
+/// 全部めくったら結果の導線(+コンプリート演出)。
 ///
 /// 抽選・永続化は遷移前に完了済みで、この画面は演出のみを担当する。
 class PackOpeningScreen extends StatefulWidget {
@@ -31,10 +35,13 @@ class _PackOpeningScreenState extends State<PackOpeningScreen>
     with TickerProviderStateMixin {
   late final AnimationController _packController;
   bool _packOpened = false;
-  final Set<int> _flipped = {};
+
+  /// 現在いちばん上にあるカードのindex。総数に達したら全部めくり終わり。
+  int _currentIndex = 0;
   bool _completeShown = false;
 
-  bool get _allFlipped => _flipped.length == widget.result.cards.length;
+  int get _total => widget.result.cards.length;
+  bool get _allDone => _currentIndex >= _total;
 
   @override
   void initState() {
@@ -51,12 +58,14 @@ class _PackOpeningScreenState extends State<PackOpeningScreen>
     super.dispose();
   }
 
-  void _onFlipped(int index) {
-    final drawn = widget.result.cards[index];
-    context.read<AudioService>().speak(drawn.card);
-    setState(() => _flipped.add(index));
-    if (_allFlipped && widget.result.becameComplete && !_completeShown) {
-      Future.delayed(const Duration(milliseconds: 900), () {
+  void _onRevealed(int index) {
+    context.read<AudioService>().speak(widget.result.cards[index].card);
+  }
+
+  void _onDismissed() {
+    setState(() => _currentIndex++);
+    if (_allDone && widget.result.becameComplete && !_completeShown) {
+      Future.delayed(const Duration(milliseconds: 500), () {
         if (mounted) setState(() => _completeShown = true);
       });
     }
@@ -75,10 +84,10 @@ class _PackOpeningScreenState extends State<PackOpeningScreen>
                 if (!_packOpened)
                   _OpeningPack(controller: _packController, pack: widget.pack)
                 else
-                  _buildCards(),
+                  _buildDeck(),
                 const Spacer(),
                 AnimatedOpacity(
-                  opacity: _allFlipped ? 1 : 0,
+                  opacity: _allDone ? 1 : 0,
                   duration: const Duration(milliseconds: 400),
                   child: _buildBottomButtons(),
                 ),
@@ -96,23 +105,30 @@ class _PackOpeningScreenState extends State<PackOpeningScreen>
     );
   }
 
-  Widget _buildCards() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
+  /// 重なったカードの山。奥のカードは少し下にずらして「重なり」を見せ、
+  /// いちばん上の1枚だけがタップに反応する。
+  Widget _buildDeck() {
+    return SizedBox(
+      width: _cardWidth,
+      height: _cardHeight + 60,
+      child: Stack(
+        alignment: Alignment.center,
+        clipBehavior: Clip.none,
         children: [
-          for (var i = 0; i < widget.result.cards.length; i++)
-            Flexible(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 150),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  child: _FlippableCard(
-                    drawn: widget.result.cards[i],
-                    onFlipped: () => _onFlipped(i),
-                  ),
-                ),
+          // 奥のカード(まだめくっていない分)を下にずらして重ねる
+          for (var i = _total - 1; i > _currentIndex; i--)
+            Positioned(
+              top: 30 + (i - _currentIndex) * 12.0,
+              child: const _DeckBack(),
+            ),
+          if (!_allDone)
+            Positioned(
+              top: 20,
+              child: _TopCard(
+                key: ValueKey('top-$_currentIndex'),
+                drawn: widget.result.cards[_currentIndex],
+                onRevealed: () => _onRevealed(_currentIndex),
+                onDismissed: _onDismissed,
               ),
             ),
         ],
@@ -122,7 +138,7 @@ class _PackOpeningScreenState extends State<PackOpeningScreen>
 
   Widget _buildBottomButtons() {
     return IgnorePointer(
-      ignoring: !_allFlipped,
+      ignoring: !_allDone,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -136,13 +152,28 @@ class _PackOpeningScreenState extends State<PackOpeningScreen>
             onTap: () {
               Navigator.of(context).pushReplacement(
                 MaterialPageRoute(
-                  builder: (_) => CollectionScreen(initialPackId: widget.pack.id),
+                  builder: (_) =>
+                      CollectionScreen(initialPackId: widget.pack.id),
                 ),
               );
             },
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 山の奥に見える裏向きカード(演出のみ、タップ不可)。
+class _DeckBack extends StatelessWidget {
+  const _DeckBack();
+
+  @override
+  Widget build(BuildContext context) {
+    return const SizedBox(
+      width: _cardWidth,
+      height: _cardHeight,
+      child: CardBack(),
     );
   }
 }
@@ -176,7 +207,7 @@ class _OpeningPack extends StatelessWidget {
   }
 }
 
-/// パックの見た目(ホーム画面と共用)。
+/// パックの見た目。
 class _PackVisual extends StatelessWidget {
   const _PackVisual({required this.pack, required this.width});
 
@@ -207,90 +238,125 @@ class _PackVisual extends StatelessWidget {
   }
 }
 
-/// タップでめくれるカード。めくり終わると新規/復習バッジを表示する。
-class _FlippableCard extends StatefulWidget {
-  const _FlippableCard({required this.drawn, required this.onFlipped});
+/// 山のいちばん上のカード。1回目のタップでめくり(flip)、2回目のタップで
+/// どかす(slide)。どかし終えると [onDismissed] で次のカードへ進む。
+class _TopCard extends StatefulWidget {
+  const _TopCard({
+    super.key,
+    required this.drawn,
+    required this.onRevealed,
+    required this.onDismissed,
+  });
 
   final DrawnCard drawn;
-  final VoidCallback onFlipped;
+  final VoidCallback onRevealed;
+  final VoidCallback onDismissed;
 
   @override
-  State<_FlippableCard> createState() => _FlippableCardState();
+  State<_TopCard> createState() => _TopCardState();
 }
 
-class _FlippableCardState extends State<_FlippableCard>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  bool _flipStarted = false;
-  bool _badgeVisible = false;
+class _TopCardState extends State<_TopCard> with TickerProviderStateMixin {
+  late final AnimationController _flip;
+  late final AnimationController _slide;
+  bool _revealed = false;
+  bool _busy = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 500),
-    );
+    _flip = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 500));
+    _slide = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 400));
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _flip.dispose();
+    _slide.dispose();
     super.dispose();
   }
 
-  void _flip() {
-    if (_flipStarted) return;
-    _flipStarted = true;
-    _controller.forward().whenComplete(() {
-      widget.onFlipped();
-      setState(() => _badgeVisible = true);
-    });
-    setState(() {});
+  void _handleTap() {
+    if (_busy) return;
+    if (!_revealed) {
+      _busy = true;
+      _flip.forward().whenComplete(() {
+        setState(() {
+          _revealed = true;
+          _busy = false;
+        });
+        widget.onRevealed();
+      });
+      setState(() {});
+    } else {
+      _busy = true;
+      _slide.forward().whenComplete(widget.onDismissed);
+      setState(() {});
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: _flip,
-      child: AspectRatio(
-        aspectRatio: 0.7,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Positioned.fill(
-              child: AnimatedBuilder(
-                animation: _controller,
-                builder: (context, _) {
-                  final angle = _controller.value * pi;
-                  final showFace = _controller.value >= 0.5;
-                  return Transform(
-                    alignment: Alignment.center,
-                    transform: Matrix4.identity()
-                      ..setEntry(3, 2, 0.001)
-                      ..rotateY(angle),
-                    child: showFace
-                        ? Transform(
-                            alignment: Alignment.center,
-                            transform: Matrix4.identity()..rotateY(pi),
-                            child: CardFace(card: widget.drawn.card),
-                          )
-                        : const CardBack(),
-                  );
-                },
-              ),
+      key: const ValueKey('top-card'),
+      onTap: _handleTap,
+      child: AnimatedBuilder(
+        animation: Listenable.merge([_flip, _slide]),
+        builder: (context, _) {
+          // どかす: 上へ飛ばしつつフェードアウト
+          final s = _slide.value;
+          final content = Opacity(
+            opacity: 1 - s,
+            child: Transform.translate(
+              offset: Offset(s * 60, -s * 420),
+              child: Transform.rotate(angle: s * 0.4, child: _buildCard()),
             ),
-            if (_badgeVisible)
-              Positioned(
-                top: -14,
-                left: 0,
-                right: 0,
-                child: Center(
-                  child: _ResultBadge(drawn: widget.drawn),
-                ),
-              ),
-          ],
-        ),
+          );
+          return content;
+        },
+      ),
+    );
+  }
+
+  Widget _buildCard() {
+    return SizedBox(
+      width: _cardWidth,
+      height: _cardHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _flip,
+              builder: (context, _) {
+                final angle = _flip.value * pi;
+                final showFace = _flip.value >= 0.5;
+                return Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.identity()
+                    ..setEntry(3, 2, 0.001)
+                    ..rotateY(angle),
+                  child: showFace
+                      ? Transform(
+                          alignment: Alignment.center,
+                          transform: Matrix4.identity()..rotateY(pi),
+                          child: CardFace(card: widget.drawn.card),
+                        )
+                      : const CardBack(),
+                );
+              },
+            ),
+          ),
+          if (_revealed)
+            Positioned(
+              top: -14,
+              left: 0,
+              right: 0,
+              child: Center(child: _ResultBadge(drawn: widget.drawn)),
+            ),
+        ],
       ),
     );
   }

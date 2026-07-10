@@ -1,5 +1,4 @@
-import 'dart:math';
-
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -10,7 +9,8 @@ import 'collection_screen.dart';
 import 'pack_opening_screen.dart';
 import 'parent_screen.dart';
 
-/// ホーム=パック選択画面。解放済みパックが浮遊し、縦スワイプで開封する。
+/// ホーム=パック選択画面。解放済みパックがカルーセルで並び、横スワイプで
+/// ぐるぐる回転して選び、中央のパックをタップで開封する(ポケポケ準拠)。
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -18,25 +18,8 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _floatController;
+class _HomeScreenState extends State<HomeScreen> {
   bool _opening = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _floatController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _floatController.dispose();
-    super.dispose();
-  }
 
   Future<void> _tryOpen(Pack pack) async {
     final state = context.read<GameState>();
@@ -93,8 +76,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     final state = context.watch<GameState>();
-    final unlockedPacks =
-        allPacks.where((p) => state.isUnlocked(p)).toList();
+    final unlockedPacks = allPacks.where((p) => state.isUnlocked(p)).toList();
     final canOpen = state.canOpen;
 
     return Scaffold(
@@ -120,17 +102,11 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
             Expanded(
-              child: PageView(
-                children: [
-                  for (final pack in unlockedPacks)
-                    _FloatingPack(
-                      pack: pack,
-                      enabled: canOpen,
-                      floatAnimation: _floatController,
-                      onSwiped: () => _tryOpen(pack),
-                      onDisabledTap: _showRecoverySheet,
-                    ),
-                ],
+              child: _PackCarousel(
+                packs: unlockedPacks,
+                enabled: canOpen,
+                onOpen: _tryOpen,
+                onDisabled: _showRecoverySheet,
               ),
             ),
             Padding(
@@ -187,86 +163,173 @@ class _StaminaChip extends StatelessWidget {
   }
 }
 
-/// 浮遊するパック。縦スワイプで開封、スタミナ0ならグレーアウト。
-class _FloatingPack extends StatelessWidget {
-  const _FloatingPack({
-    required this.pack,
+/// パックのカルーセル。横スワイプで各パックがY軸回転しながら回り(ぐるぐる)、
+/// 中央のパックをタップで開封。左右のパックをタップすると中央に回ってくる。
+class _PackCarousel extends StatefulWidget {
+  const _PackCarousel({
+    required this.packs,
     required this.enabled,
-    required this.floatAnimation,
-    required this.onSwiped,
-    required this.onDisabledTap,
+    required this.onOpen,
+    required this.onDisabled,
   });
 
-  final Pack pack;
+  final List<Pack> packs;
   final bool enabled;
-  final Animation<double> floatAnimation;
-  final VoidCallback onSwiped;
-  final VoidCallback onDisabledTap;
+  final void Function(Pack) onOpen;
+  final VoidCallback onDisabled;
+
+  @override
+  State<_PackCarousel> createState() => _PackCarouselState();
+}
+
+class _PackCarouselState extends State<_PackCarousel> {
+  late final PageController _controller;
+  int _current = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PageController(viewportFraction: 0.62);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  /// このindexのページの中心からのずれ(0=中央、±1=隣)。
+  double _deltaFor(int index) {
+    if (_controller.hasClients && _controller.position.haveDimensions) {
+      return (_controller.page ?? _current.toDouble()) - index;
+    }
+    return (_current - index).toDouble();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? null : onDisabledTap,
-      onVerticalDragEnd: (details) {
-        if (!enabled) {
-          onDisabledTap();
-          return;
-        }
-        final velocity = details.primaryVelocity ?? 0;
-        if (velocity.abs() > 250) onSwiped();
-      },
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AnimatedBuilder(
-            animation: floatAnimation,
-            builder: (context, child) {
-              final dy = sin(floatAnimation.value * pi) * 12;
-              return Transform.translate(offset: Offset(0, dy), child: child);
+    return Column(
+      children: [
+        Expanded(
+          child: ScrollConfiguration(
+            // タッチ(iOS)に加え、マウス/トラックパッドのドラッグでも回せるように
+            // する(flutter run -d chrome やデスクトップでの操作・検証のため)。
+            behavior: const _DragEverywhereScrollBehavior(),
+            child: PageView.builder(
+            controller: _controller,
+            onPageChanged: (i) => setState(() => _current = i),
+            itemCount: widget.packs.length,
+            itemBuilder: (context, index) {
+              return AnimatedBuilder(
+                animation: _controller,
+                builder: (context, child) {
+                  final delta = _deltaFor(index);
+                  final isCenter = delta.abs() < 0.5;
+                  // 回転(ぐるぐる)+ 中央以外は少し縮小して奥行きを出す
+                  final rotation = delta * 0.5;
+                  final scale = (1 - delta.abs() * 0.18).clamp(0.72, 1.0);
+                  return Center(
+                    child: Transform(
+                      alignment: Alignment.center,
+                      transform: Matrix4.identity()
+                        ..setEntry(3, 2, 0.0015)
+                        ..rotateY(rotation)
+                        ..scaleByDouble(scale, scale, scale, 1),
+                      child: GestureDetector(
+                        onTap: () {
+                          if (!widget.enabled) {
+                            widget.onDisabled();
+                            return;
+                          }
+                          if (isCenter) {
+                            widget.onOpen(widget.packs[index]);
+                          } else {
+                            _controller.animateToPage(
+                              index,
+                              duration: const Duration(milliseconds: 400),
+                              curve: Curves.easeOut,
+                            );
+                          }
+                        },
+                        child: _PackCard(
+                          pack: widget.packs[index],
+                          enabled: widget.enabled,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
             },
-            child: ColorFiltered(
-              colorFilter: enabled
-                  ? const ColorFilter.mode(Colors.transparent, BlendMode.dst)
-                  : const ColorFilter.matrix(<double>[
-                      0.2126, 0.7152, 0.0722, 0, 0, //
-                      0.2126, 0.7152, 0.0722, 0, 0, //
-                      0.2126, 0.7152, 0.0722, 0, 0, //
-                      0, 0, 0, 1, 0,
-                    ]),
-              child: Container(
-                width: 180,
-                height: 252,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      pack.color,
-                      Color.lerp(pack.color, Colors.white, 0.4)!,
-                    ],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white, width: 4),
-                  boxShadow: const [
-                    BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 12,
-                        offset: Offset(0, 6)),
-                  ],
-                ),
-                child: Center(
-                  child: Text(pack.emoji, style: const TextStyle(fontSize: 80)),
-                ),
-              ),
-            ),
           ),
-          const SizedBox(height: 24),
-          if (enabled)
-            const Text('⬆️', style: TextStyle(fontSize: 36))
-          else
-            const Text('💤', style: TextStyle(fontSize: 36)),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // 操作ヒント: 開封可=タップ(👆)、スタミナ0=グレーアウトの💤
+        if (widget.enabled)
+          const Text('👆', style: TextStyle(fontSize: 36))
+        else
+          const Text('💤', style: TextStyle(fontSize: 36)),
+        const SizedBox(height: 8),
+        if (widget.packs.length > 1)
+          Text('👈 🔄 👉',
+              style: TextStyle(
+                  fontSize: 20, color: Colors.white.withValues(alpha: 0.8))),
+      ],
+    );
+  }
+}
+
+/// タッチに加えてマウス・トラックパッドのドラッグでもスクロールを許可する。
+class _DragEverywhereScrollBehavior extends MaterialScrollBehavior {
+  const _DragEverywhereScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.trackpad,
+        PointerDeviceKind.stylus,
+      };
+}
+
+/// カルーセル内の1パックの見た目。スタミナ0のときはグレーアウト。
+class _PackCard extends StatelessWidget {
+  const _PackCard({required this.pack, required this.enabled});
+
+  final Pack pack;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final card = Container(
+      width: 200,
+      height: 280,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [pack.color, Color.lerp(pack.color, Colors.white, 0.4)!],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white, width: 4),
+        boxShadow: const [
+          BoxShadow(color: Colors.black26, blurRadius: 12, offset: Offset(0, 6)),
         ],
       ),
+      child: Center(
+        child: Text(pack.emoji, style: const TextStyle(fontSize: 88)),
+      ),
+    );
+    if (enabled) return card;
+    return ColorFiltered(
+      colorFilter: const ColorFilter.matrix(<double>[
+        0.2126, 0.7152, 0.0722, 0, 0, //
+        0.2126, 0.7152, 0.0722, 0, 0, //
+        0.2126, 0.7152, 0.0722, 0, 0, //
+        0, 0, 0, 1, 0,
+      ]),
+      child: card,
     );
   }
 }

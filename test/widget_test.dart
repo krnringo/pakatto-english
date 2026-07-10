@@ -57,23 +57,26 @@ void main() {
       expect(find.text(animalsPack.emoji), findsNothing);
     });
 
-    testWidgets('縦スワイプで開封画面に遷移し3枚の裏カードが出る', (tester) async {
+    testWidgets('中央パックのタップで開封画面に遷移し重なった裏カードが出る',
+        (tester) async {
       final state = await freshState();
       final audio = RecordingAudioService();
       await tester.pumpWidget(wrap(const HomeScreen(), state, audio));
       await tester.pump();
 
-      await tester.fling(
-          find.text(colorsPack.emoji), const Offset(0, -400), 800);
+      await tester.tap(find.text(colorsPack.emoji)); // 中央パックをタップで開封
       await tester.pump(); // openPack完了待ち
       await tester.pump(const Duration(milliseconds: 100)); // 画面遷移
       await tester.pump(const Duration(seconds: 1)); // 開封アニメーション
 
       expect(state.currentStamina, 1, reason: 'スタミナが1消費される');
-      expect(find.text('⭐'), findsNWidgets(3), reason: '裏向きカード3枚');
+      expect(find.text('⭐'), findsWidgets, reason: '重なった裏向きカードが出る');
+      expect(find.byKey(const ValueKey('top-card')), findsOneWidget,
+          reason: 'いちばん上のカードが1枚');
     });
 
-    testWidgets('スタミナ0では開封されず、回復残り時間シートが出る', (tester) async {
+    testWidgets('スタミナ0ではタップで開封されず、回復残り時間シートが出る',
+        (tester) async {
       var now = DateTime(2026, 7, 10, 9, 0);
       final state = await freshState(clock: () => now);
       await state.openPack(colorsPack);
@@ -86,8 +89,7 @@ void main() {
       expect(find.text('💤'), findsOneWidget, reason: 'グレーアウト状態の表示');
 
       final openCountBefore = state.totalOpenCount;
-      await tester.fling(
-          find.text(colorsPack.emoji), const Offset(0, -400), 800);
+      await tester.tap(find.text(colorsPack.emoji));
       await tester.pump(const Duration(milliseconds: 300));
 
       expect(state.totalOpenCount, openCountBefore, reason: '開封されない');
@@ -96,7 +98,20 @@ void main() {
   });
 
   group('開封演出画面', () {
-    testWidgets('タップでめくると音声再生+新規/復習バッジが出て、全部めくると導線が出る',
+    // 上のカードを「めくる」→「どかす」の2タップで1枚ずつ進める。
+    Future<void> reveal(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('top-card')));
+      await tester.pump(); // flip開始フレーム
+      await tester.pump(const Duration(milliseconds: 600)); // flip完了
+    }
+
+    Future<void> dismiss(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('top-card')));
+      await tester.pump(); // slide開始フレーム
+      await tester.pump(const Duration(milliseconds: 500)); // slide完了→次のカード
+    }
+
+    testWidgets('1枚ずつめくると音声再生+新規/復習バッジが出て、全部めくると導線が出る',
         (tester) async {
       final state = await freshState();
       final audio = RecordingAudioService();
@@ -115,28 +130,27 @@ void main() {
       ));
       await tester.pump(const Duration(seconds: 1)); // 開封アニメーション完了
 
-      // 1枚目: 新規(tap後のpump()はアニメーション開始フレーム用)
-      await tester.tap(find.text('⭐').first);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
+      // 1枚目: 新規
+      await reveal(tester);
       expect(audio.spoken, ['red'], reason: 'めくった瞬間に音声再生');
       expect(find.text('✨ はじめて!'), findsOneWidget);
+      await dismiss(tester);
 
       // 2枚目: 復習(×3表示)
-      await tester.tap(find.text('⭐').first);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
+      await reveal(tester);
       expect(audio.spoken, ['red', 'blue']);
       expect(find.text('🔁 もういちど! ×3'), findsOneWidget);
+      await dismiss(tester);
 
       // 3枚目
-      await tester.tap(find.text('⭐').first);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
+      await reveal(tester);
       expect(audio.spoken, ['red', 'blue', 'yellow']);
+      await dismiss(tester);
 
       // 全部めくったのでホーム/図鑑ボタンが出る
       await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byKey(const ValueKey('top-card')), findsNothing,
+          reason: 'もうめくるカードはない');
       expect(find.text('🏠'), findsOneWidget);
       expect(find.text('📖'), findsOneWidget);
     });
@@ -156,10 +170,9 @@ void main() {
       ));
       await tester.pump(const Duration(seconds: 1));
 
-      await tester.tap(find.text('⭐').first);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 600));
-      await tester.pump(const Duration(milliseconds: 1000)); // 演出待ち
+      await reveal(tester);
+      await dismiss(tester); // 全部めくり終える
+      await tester.pump(const Duration(milliseconds: 600)); // 演出待ち(delay500)
       await tester.pump(const Duration(milliseconds: 800)); // スケールイン
 
       expect(find.text('👑'), findsOneWidget);
