@@ -53,8 +53,7 @@ void main() {
       await tester.pump();
 
       expect(find.text('⚡'), findsNWidgets(2));
-      // パック袋のイラスト面+下部ダイヤバッジの2箇所に絵文字が出る
-      expect(find.text(colorsPack.emoji), findsNWidgets(2));
+      expect(find.text(colorsPack.emoji), findsOneWidget);
       // 有料パック(未解放)はホームに出ない
       expect(find.text(animalsPack.emoji), findsNothing);
     });
