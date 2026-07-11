@@ -145,7 +145,10 @@ class _PackOpeningScreenState extends State<PackOpeningScreen>
         children: [
           _BigIconButton(
             emoji: '🏠',
-            onTap: () => Navigator.of(context).pop(),
+            // この画面は PackBagScreen の上に積まれているため、pop()単体
+            // では袋選択画面止まりになる。ホームまで一気に戻す。
+            onTap: () =>
+                Navigator.of(context).popUntil((route) => route.isFirst),
           ),
           const SizedBox(width: 32),
           _BigIconButton(

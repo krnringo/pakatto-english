@@ -96,8 +96,13 @@ class GameState extends ChangeNotifier {
 
   /// パックを1回開封する(スタミナ1消費、3枚抽選、復習判定、永続化)。
   ///
-  /// スタミナ0のときは [StateError]。呼び出し側は [canOpen] で事前に防ぐ。
+  /// スタミナ0、または未解放パックのときは [StateError]。呼び出し側は
+  /// [canOpen] / [isUnlocked] で事前に防ぐ。UI側のフィルタだけに頼らず、
+  /// 実際に抽選・永続化を行うこの境界でもパック解放を担保する。
   Future<PackOpeningResult> openPack(Pack pack) async {
+    if (!isUnlocked(pack)) {
+      throw StateError('pack is locked');
+    }
     final now = _clock();
     _stamina = _stamina.consume(now);
 

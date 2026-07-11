@@ -201,5 +201,12 @@ void main() {
       expect(state.isUnlocked(animalsPack), isFalse);
       expect(state.isUnlocked(vehiclesPack), isFalse);
     });
+
+    test('未解放パックをopenPackするとStateError(UIのフィルタに頼らず状態層でも拒否)',
+        () async {
+      final repo = await freshRepo();
+      final state = GameState(repository: repo)..load();
+      expect(() => state.openPack(animalsPack), throwsStateError);
+    });
   });
 }
